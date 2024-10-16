@@ -322,7 +322,7 @@ run;
 *Copying relevance assumption results and exchangeability results to the report;
 ods pdf file="&dataout.\&reportname..pdf";
 title  j=c "Relevance Assumption:"; 
-title2 j=c "Checking if there is a strong association between exposuregenous variable and IV";
+title2 j=c "Checking if there is a strong association between exposure variable and IV";
 title4 j=c "Check for P-values for the IV in the parameter estimates";
 proc print data= ParameterEstimates; run;
 
@@ -379,7 +379,7 @@ quit;
 proc sort data=foriv_prerun_residual;by replicate;run;
 
 Proc syslin data=foriv_prerun_residual 2sls;
-exposuregenous &exposure_var.; 
+exposure &exposure_var.; 
 Instruments &instrument.; 
 Model &exposure_var.=&catvar. &numvar. &instrument.;
 
