@@ -30,10 +30,27 @@ ods listing;
  
 options nofmterr symbolgen mlogic notes SPOOL;
 
-****Macro part 1: *Relevance assumption;
+data combo;
+input id1 id2;
+cards;
+1 2 
+2 3 
+1 3 
+3 4 
+2 4 
+1 4 
+4 5 
+3 5 
+2 5 
+1 5 
+;
+run;
 
 
-%macro relevance_assumption;
+
+
+
+%macro assumption_checking;
 
 /*******Report error message in log, if each of the below "MUST INPUT" variable is missing*********/;
 %if &dataout.=   %then %do; 
@@ -45,6 +62,23 @@ options nofmterr symbolgen mlogic notes SPOOL;
 %if &instrument.=   %then %do; 
     %put ERROR:  'instrument' variable is not specified.; %return;
 %end;
+
+
+%if &numvar.= & &catvar.=  %then %do; 
+    %put ERROR:  'numvar & catvar' variable is not specified.; %return;
+%end;
+%if &exposure_var.=   %then %do; 
+    %put ERROR:  'exposure_var' variable is not specified.; %return;
+%end;
+
+* Remove "" from dataout path;
+%let dataout=%qsysfunc(dequote(&dataout));
+
+***Checking if instrument and instrumentname are different;;
+%if &instrument.= &instrumentname. %then %do;
+ %let instrumentname = inst_&instrumentname.;
+%end;
+
 
 * Remove "" from dataout path;
 %let dataout=%qsysfunc(dequote(&dataout));
@@ -70,14 +104,15 @@ options nofmterr symbolgen mlogic notes SPOOL;
 %end;
 
 
+****Macro part 1: *Relevance assumption;
 
-**Checking if endovar is binary or linear,and deciding on whether to do logistic regression on linear regression;
+**Checking if exposure_var is binary or linear,and deciding on whether to do logistic regression on linear regression;
 **Calculate IV;
 
 
-%if &isendo_binary.="yes" %then %do;
+%if &isexposure_binary.="yes" %then %do;
 proc logistic data=mydata;
-model &endovar. =&instrument.  ;
+model &exposure_var. =&instrument.  ;
 	output out=work.IV_df  p=&instrumentname.;
 run;
 %end;
@@ -85,32 +120,31 @@ run;
 %else %do;
 proc reg data=mydata PLOTS(MAXPOINTS=NONE) ;
 var &instrument.;
-model &endovar. =&instrument. ;
+model &exposure_var. =&instrument. ;
 output out=work.IV_df  p=&instrumentname.;
 run;
 %end;
 
 
-*Relevance assumption;
-*Setting the reportname for the releance assumption report;
-%if &relevancereportname.=  %then %do;
-   %let reportname=Relevance assumption Report;				
+
+*Setting the reportname for the  assumption report;
+%if &assumptionsreport.=  %then %do;
+   %let reportname=Assumptions checking Report;				
 %end;
 %else %do;
-   %let reportname = &relevancereportname. ;
+   %let reportname = &assumptionsreport. ;
 %end;
 
-ods pdf file="&dataout.\&reportname..pdf"; 
-title 'Relevance Assumption';
 
-*Relevance assumption;
+*Relevance assumption ;
 
+ods graphics off;
+ods exclude all;
 proc reg data=work.IV_df ;
-model &endovar. =&instrument. ;
+model &exposure_var. =&instrument. ;
+ods output ParameterEstimates=ParameterEstimates;
 run;
-
-ods pdf close;
-%mend;
+ods exclude none;
 
 * Macro to caluclate smd for numeric variables;
 
@@ -145,7 +179,7 @@ proc sql;
   where a.id2=b.id;
 quit;
 
-****estimate smd for numerical variables;
+****estimate smd for continous variables;
 data smdtab;
   set tab2;
   md=mean1-mean2;
@@ -219,45 +253,6 @@ proc append base=smd data=smd_&var. force;run;
 
 *Exchangeability assumption;
 
-data combo;
-input id1 id2;
-cards;
-1 2 
-2 3 
-1 3 
-3 4 
-2 4 
-1 4 
-4 5 
-3 5 
-2 5 
-1 5 
-;
-run;
-%macro Exchange_assumption;
-
-/*******Report error message in log, if each of the below "MUST INPUT" variable is missing*********/;
-
-%if &instrument.=   %then %do; 
-    %put ERROR:  'instrument' variable is not specified.; %return;
-%end;
-%if &numvar.= & &catvar.=  %then %do; 
-    %put ERROR:  'numvar & catvar' variable is not specified.; %return;
-%end;
-%if &endovar.=   %then %do; 
-    %put ERROR:  'endovar' variable is not specified.; %return;
-%end;
-
-* Remove "" from dataout path;
-%let dataout=%qsysfunc(dequote(&dataout));
-
-***Checking if instrument and instrumentname are different;;
-%if &instrument.= &instrumentname. %then %do;
- %let instrumentname = inst_&instrumentname.;
-%end;
-
-
-
 *Sort the instrumnet;
 proc sort data=work.IV_df;by &instrument.;run;
 *get quintile;
@@ -285,13 +280,17 @@ data fortable1;
 	else if group=2 then quintile=3;
 	else if group=3 then quintile=4;
 	else if group=4 then quintile=5;
-keep  quintile &endovar.  &instrument. &instrumentname.  &numvar. &catvar.;
+keep  quintile &exposure_var.  &instrument. &instrumentname.  &numvar. &catvar.;
 run;
 
 *Using num_smd for numerical variables, and cat_smd for categorical vraiables smd caluclation;
 option ls=100;
 
 proc delete data=smd;run;
+data smd;
+length var $25. smd_max  8.4;
+run;
+
 %let i=1;
 %let inp=&numvar. || "";
 %let var=%scan(&inp,&i);
@@ -314,20 +313,25 @@ proc delete data=smd;run;
 	%let var=%scan(&inp,&i);
 %end;
 
-*Setting the reportname for the exclusion assumption report;
-%if &exclusionreportname.=  %then %do;
-   %let reportname=Exclusion assumption Report;				
-%end;
-%else %do;
-   %let reportname = &exclusionreportname. ;
-%end;
-
-*Copying calculated smd to the report;
-ods pdf file="&dataout.\&reportname..pdf";
- title 'Exclusion Assumption';
-proc print data=smd;
+*Cleaning smd data;
+data smd1;
+set smd;
+label var="Variable" smd_max="Maximum absolute SMD";
 run;
+
+*Copying relevance assumption results and exchangeability results to the report;
+ods pdf file="&dataout.\&reportname..pdf";
+title  j=c "Relevance Assumption:"; 
+title2 j=c "Checking if there is a strong association between exposuregenous variable and IV";
+title4 j=c "Check for P-values for the IV in the parameter estimates";
+proc print data= ParameterEstimates; run;
+
+title j=c 'Exchangeability Assumption';
+ title2 j=c "The exogenous variables and IV are uncorrelated";
+title4 j=c "Check for max absolute value of SMD <= 0.5";
+proc print data=smd1 noobs label;run;
 ods pdf close;
+
 
 %mend;
 
@@ -345,8 +349,8 @@ ods pdf close;
     %put ERROR:  'outcome' variable is not specified.; %return;
 %end;
 
-%if &endovar.=   %then %do; 
-    %put ERROR:  'endovar' variable is not specified.; %return;
+%if &exposure_var.=   %then %do; 
+    %put ERROR:  'exposure_var' variable is not specified.; %return;
 %end;
 
 * Remove "" from dataout path;
@@ -358,14 +362,14 @@ seed=96543
 method=urs  /*resample with replacement */
 samprate=1	 /* each bootstrap sample has N observations */
 outhits
-reps=10; 	/* generate resamples, eg: 1000 times*/
+reps=1000; 	/* generate resamples, eg: 1000 times*/
 run;
 
 proc sort data=outsample;by replicate  ;run;
 
 * run residual model;
 proc reg data=outsample plots(maxpoints=none);
-	model &endovar.=&catvar. &numvar. &instrument.;
+	model &exposure_var.=&catvar. &numvar. &instrument.;
 	output out=foriv_prerun_residual residual=insu_residual;
 	by replicate;
 run;
@@ -375,12 +379,12 @@ quit;
 proc sort data=foriv_prerun_residual;by replicate;run;
 
 Proc syslin data=foriv_prerun_residual 2sls;
-Endogenous &endovar.; 
+exposuregenous &exposure_var.; 
 Instruments &instrument.; 
-Model &endovar.=&catvar. &numvar. &instrument.;
+Model &exposure_var.=&catvar. &numvar. &instrument.;
 
 ods output parameterestimates=est;
-Model &outcome.= &endovar. insu_residual &catvar. &numvar. ; *****Y is primary outcome;
+Model &outcome.= &exposure_var. insu_residual &catvar. &numvar. ; *****Y is primary outcome;
 by replicate;
 run;
 
@@ -409,10 +413,13 @@ proc contents data=want2;run;
 
 *calculating estimats with 95% confidence interval;
 ods select none;
+
+
 proc means data=want2 stackods mean clm alpha=0.05 ; 
- var intercept &catvar. &numvar. &endovar.  ;
+ var intercept &catvar. &numvar. &exposure_var.  ;
 ods output summary=BT_estimates;run;
 ods select all;
+
 
 *Setting the reportname for the estimates with 95% CI ;
 %if &estimatesreport.=  %then %do;
@@ -425,7 +432,10 @@ ods select all;
 * Copying the estimates to the report;
 ods pdf file="&dataout.\&reportname..pdf"; 
 title 'Estimates from Bootstrapping';
-proc print data=BT_estimates;
+proc print data=BT_estimates LABEL;
+    label Mean='Parameter Estimates'
+		LCLM = 'Lower 95% CL for Estimate'
+		  UCLM = 'Upper 95% CL for Estimate';
 run;
 ods pdf close;
 %mend;
